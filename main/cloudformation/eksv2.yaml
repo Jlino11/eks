@@ -1,0 +1,242 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create an EKS Cluster with Fargate and ECR
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: MyEKSCluster
+    Description: Name of the EKS cluster.
+    
+  NodeGroupName:
+    Type: String
+    Default: MyFargateProfile
+    Description: Name of the Fargate profile.
+
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC.
+
+Resources:
+  ################## NETWORK ######################
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-vpc"
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyInternetGateway
+
+  # Attach Internet Gateway to VPC
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # NOTE: EKS NEEDS AT LEAST 2 AZ FOR PODS
+
+  # Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] # TO CHANGE THE AZ USE THE NUMBER
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-public-subnet"
+
+  # Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs '' ] # TO CHANGE THE AZ USE THE NUMBER
+      # MapPublicIpOnLaunch: true # Make sure that the MapPublicIpOnLaunch for the private subnet is set to false if you intend for it to remain private and not receive public IP addresses.
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-private-subnet"
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MyPublicRouteTable
+
+  # Route to IGW for Public Route Table
+  PublicRouteToIGW:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Associate Public Subnet with Public Route Table
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MyPrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Set Public Route Table as Main Route Table
+  MainRouteTableAssociation:
+    Type: AWS::EC2::RouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      VpcId: !Ref VPC
+
+  # Note: Typically, private subnets do not have a route to an IGW
+  # You can add routes for NAT Gateway if needed for outbound internet access
+  # For allow internet acces to the pods you will need to use NGW or other thing.
+
+#   # EKS Cluster Role
+#   EKSClusterRole:
+#     Type: AWS::IAM::Role
+#     Properties:
+#       AssumeRolePolicyDocument:
+#         Version: '2012-10-17'
+#         Statement:
+#           - Effect: Allow
+#             Principal:
+#               Service: eks.amazonaws.com
+#             Action: sts:AssumeRole
+#       Policies:
+#         - PolicyName: eks-cluster-policy
+#           PolicyDocument:
+#             Version: '2012-10-17'
+#             Statement:
+#               - Effect: Allow
+#                 Action:
+#                   - eks:DescribeCluster
+#                   - eks:CreateNodegroup
+#                   - eks:DeleteNodegroup
+#                   - eks:CreateFargateProfile
+#                   - eks:DeleteFargateProfile
+#                 Resource: "*"
+
+#   # EKS Cluster
+#   EKSCluster:
+#     Type: AWS::EKS::Cluster
+#     Properties:
+#       Name: !Ref ClusterName
+#       RoleArn: !GetAtt EKSClusterRole.Arn
+#       ResourcesVpcConfig:
+#         SubnetIds:
+#           - !Ref PublicSubnet
+#           - !Ref PrivateSubnet
+#         EndpointPublicAccess: true
+#         EndpointPrivateAccess: true
+
+#   # Pod Execution Role for Fargate
+#   PodExecutionRole:
+#     Type: AWS::IAM::Role
+#     DependsOn: EKSCluster
+#     Properties:
+#       AssumeRolePolicyDocument:
+#         Version: '2012-10-17'
+#         Statement:
+#           - Effect: Allow
+#             Principal:
+#               Service: 
+#                 - eks-fargate.amazonaws.com
+#                 - eks-fargate-pods.amazonaws.com
+#             Action: sts:AssumeRole
+#       Policies:
+#         - PolicyName: fargate-pod-execution-policy
+#           PolicyDocument:
+#             Version: '2012-10-17'
+#             Statement:
+#               - Effect: Allow
+#                 Action:
+#                   - ecr:GetAuthorizationToken
+#                   - ecr:BatchGetImage
+#                   - ecr:GetDownloadUrlForLayer
+#                   # - logs:CreateLogStream       # Added for logging
+#                   # - logs:PutLogEvents          # Added for logging
+#                 Resource: "*"
+                
+#   # Fargate Profile
+#   FargateProfile:
+#     Type: AWS::EKS::FargateProfile
+#     DependsOn: EKSCluster
+#     Properties:
+#       ClusterName: !Ref ClusterName
+#       FargateProfileName: !Ref NodeGroupName
+#       PodExecutionRoleArn: !GetAtt PodExecutionRole.Arn
+#       Subnets:
+#         - !Ref PrivateSubnet
+#       Selectors:
+#         - Namespace: default  # Correctly formatted as a list of selectors
+#         # - Namespace: kube-system # This is for permissions to execute pods MAYBE
+
+Outputs:
+  VPCId:
+    Description: "VPC ID"
+    Value: !Ref VPC
+  PublicSubnetId:
+    Description: "Public Subnet ID"
+    Value: !Ref PublicSubnet
+  PrivateSubnetId:
+    Description: "Private Subnet ID"
+    Value: !Ref PrivateSubnet
+  InternetGatewayId:
+    Description: "Internet Gateway ID"
+    Value: !Ref InternetGateway
+#   EKSClusterName:
+#     Description: "EKS Cluster Name"
+#     Value: !Ref ClusterName
+  # Uncomment if using ECR
+  # ECRRepositoryUri:
+  #   Description: "ECR Repository URI"
+  #   Value: !GetAtt ECRRepository.RepositoryUri
+
+
+
+
+
+  # TODO:
+  # 1- INTERNET GATEWAY IS MISSING
+  # 2- NOT TO BE DECLARED IN US-EAST-2
+  # 3- CREATE ECR AND DOCKER REGISTER
+  # 4- CONFIGURE ECR WITH DOCKER REGISTER
+  # 5- STILL FAILURE IMAGEPULLERROR: ITS ABOUT DNS AND NETWORK CONFIGURATION
+  # MAYBE:
+  # 1- USE CODE PIPELINE TO CHECK THE STACK
+  # TOPICS:
+  # * Service Role vs Service-Linked Role
+  # * WHEN YOU CREATE RESOURCE THAT DEPENDS OF OTHER THINGS U SHOULD USE "DependsOn: EKSCluster"
+  # BECAUSE AWS TRY TO RUN ALL AT THE SAME TIME AND U WILL HAVE ERROR IF U USE SOME RESOURCE 
+  # THAT IS STILL CREATING. KEEP IN MIND.
+  
