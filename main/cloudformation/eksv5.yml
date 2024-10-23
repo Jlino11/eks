@@ -1,6 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Modular CloudFormation template for VPC, EKS Cluster with Fargate, NGINX as reverse proxy, S3 with CloudFront, and security configurations for PCI DSS.
 
+# PARAMETERS
 Parameters:
   VPCName:
     Type: String
@@ -48,12 +49,38 @@ Parameters:
   # LoggingBucket:
   #   Type: String
   #   Description: S3 bucket name for logging purposes.
+  # DBInstanceClass:
+  #   Type: String
+  #   Default: db.t3.medium
+  #   Description: DB instance class for PostgreSQL.
+  # AllocatedStorage:
+  #   Type: String
+  #   Default: "20"
+  #   Description: Allocated storage for PostgreSQL in GB.
+  # DBName:
+  #   Type: String
+  #   Default: MyPaymentDB
+  #   Description: Name of the PostgreSQL database.
+  # DBMasterUsername:
+  #   Type: String
+  #   Default: admin
+  #   Description: Master username for PostgreSQL database.
+  # DBMasterPassword:
+  #   NoEcho: true
+  #   Type: String
+  #   Description: Master password for PostgreSQL database.
+  # KmsKeyId:
+  #   Type: String
+  #   Description: The KMS Key ID used to encrypt the database.
   VersionTag:
     Type: String
     Default: v1.0.0
     Description: Version tag for this CloudFormation stack.
 
+##########################################################################################################
+# RESOURCES
 Resources:
+# NETWORK
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -167,7 +194,8 @@ Resources:
           Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
-
+#################################################################################
+# ROUTE TABLES
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -213,7 +241,8 @@ Resources:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       NatGatewayId: !Ref NatGateway
-
+###############################################################################################
+# ROUTETABLE ASSOCIATIONS
   PrivateSubnetRouteTableAssociation1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -225,6 +254,151 @@ Resources:
     Properties:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
+
+###############################################################################################
+# SECURITY GROUPS
+
+  EKSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for EKS cluster"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # Allow inbound traffic from within the VPC (for internal pod communication)
+        - IpProtocol: -1  # All traffic
+          CidrIp: 10.0.0.0/16  # VPC range
+      SecurityGroupEgress:
+        # Allow all outbound traffic
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-eks-sg"
+        - Key: Version
+          Value: !Ref VersionTag
+
+  FargatePodSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for Fargate pods"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # Allow inbound traffic from the EKSClusterSecurityGroup (internal communication)
+        - IpProtocol: -1
+          SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+      SecurityGroupEgress:
+        # Allow all outbound traffic (internet access)
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-fargate-sg"
+        - Key: Version
+          Value: !Ref VersionTag
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for RDS PostgreSQL"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # Allow traffic to PostgreSQL (port 5432) from within the VPC
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 10.0.0.0/16  # VPC range
+      SecurityGroupEgress:
+        # Allow all outbound traffic (to interact with other services like S3, external APIs, etc.)
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-rds-sg"
+        - Key: Version
+          Value: !Ref VersionTag
+
+  NatGatewaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for NAT Gateway"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # Allow traffic from private subnets (for outgoing internet access)
+        - IpProtocol: -1
+          CidrIp: 10.0.0.0/16  # VPC range
+      SecurityGroupEgress:
+        # Allow all outbound traffic (to internet)
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${VPCName}-nat-sg"
+        - Key: Version
+          Value: !Ref VersionTag
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for ALB"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443  # HTTPS traffic
+          ToPort: 443
+          CidrIp: 0.0.0.0/0  # Public access for HTTPS
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0  # Allow outbound traffic
+      Tags:
+        - Key: Name
+          Value: ALBSecurityGroup
+
+###########################################################################################################
+# SERVICES
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: PaymentGatewayALB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: ALB-PaymentGateway
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 443  # HTTPS port
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref SSLCertificateArn  # ACM certificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PaymentTargetGroup
+
+  PaymentTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: PaymentTargetGroup
+      Port: 8080  # Traffic to backend pods
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip  # Targeting Fargate pods
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Tags:
+        - Key: Name
+          Value: PaymentTargetGroup
 
   # # S3 for Static Content and CloudFront Configuration
   # StaticContentBucket:
@@ -277,6 +451,9 @@ Resources:
   #     Tags:
   #       - Key: Version
   #         Value: !Ref VersionTag
+  ######################################################################################
+  # CLUSTER CONFIG
+
   # IAM Role para EKS Cluster
   EKSClusterRole:
     Type: AWS::IAM::Role
@@ -340,6 +517,7 @@ Resources:
         - Key: Version
           Value: !Ref VersionTag
 
+  # Se separan los perfiles para no ocuacionar problems entre los recursos del EKS y la APP
   # Fargate Profile para el namespace "kube-system"
   FargateProfileKubeSystem:
     Type: AWS::EKS::FargateProfile
@@ -355,7 +533,7 @@ Resources:
       Tags:
         - Key: Version
           Value: !Ref VersionTag
-          
+
   # Perfil de Fargate para ejecutar Pods en el namespace "default"
   FargateProfile:
     Type: AWS::EKS::FargateProfile
@@ -372,6 +550,45 @@ Resources:
       Tags:
         - Key: Version
           Value: !Ref VersionTag
+
+  # # PostgreSQL Database (RDS) with KMS Encryption
+  # RDSPostgresDB:
+  #   Type: AWS::RDS::DBInstance
+  #   Properties: 
+  #     DBInstanceIdentifier: !Sub "${ClusterName}-postgres-db"
+  #     DBInstanceClass: !Ref DBInstanceClass
+  #     Engine: postgres
+  #     MasterUsername: !Ref DBMasterUsername
+  #     MasterUserPassword: !Ref DBMasterPassword
+  #     AllocatedStorage: !Ref AllocatedStorage
+  #     DBName: !Ref DBName
+  #     VPCSecurityGroups:
+  #       - !Ref RDSSecurityGroup
+  #     DBSubnetGroupName: !Ref DBSubnetGroup
+  #     StorageEncrypted: true
+  #     KmsKeyId: !Ref KmsKeyId
+  #     BackupRetentionPeriod: 7
+  #     MultiAZ: true
+  #     PubliclyAccessible: false
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub "${ClusterName}-postgres-db"
+  #       - Key: Version
+  #         Value: !Ref VersionTag
+
+  # # DB Subnet Group for RDS (using private subnets)
+  # DBSubnetGroup:
+  #   Type: AWS::RDS::DBSubnetGroup
+  #   Properties:
+  #     DBSubnetGroupDescription: "Subnet group for PostgreSQL RDS"
+  #     SubnetIds:
+  #       - !Ref PrivateSubnet1
+  #       - !Ref PrivateSubnet2
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub "${ClusterName}-db-subnet-group"
+  #       - Key: Version
+  #         Value: !Ref VersionTag
 
   # ESTO ES IMPOSIBLE REALIZARLO CON CLOUDFORMATION
   # NGINXService:
@@ -402,3 +619,6 @@ Outputs:
   EKSClusterName:
     Description: EKS Cluster Name
     Value: !Ref EKSCluster
+
+# TODO:
+# SE NECESITA CREAR UN LOADBALANCER CON EKS EL CUAL ES UTILIZADO POR UN ALB COMO TARGET
