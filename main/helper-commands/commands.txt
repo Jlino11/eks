@@ -1,0 +1,6 @@
+kubectl create iamserviceaccount \
+  --cluster MyEKSCluster \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --attach-policy-arn arn:aws:iam::058264080215:policy/AWSLoadBalancerControllerIAMPolicy \
+  --approve
