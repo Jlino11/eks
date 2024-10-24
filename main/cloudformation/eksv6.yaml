@@ -365,6 +365,10 @@ Resources:
           FromPort: 443  # HTTPS traffic
           ToPort: 443
           CidrIp: 0.0.0.0/0  # Public access for HTTPS
+        - IpProtocol: tcp
+          FromPort: 80  # HTTPS traffic
+          ToPort: 80
+          CidrIp: 0.0.0.0/0  # Public access for HTTP
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0  # Allow outbound traffic
@@ -382,57 +386,59 @@ Resources:
 ###########################################################################################################
 # SERVICES
 
-  # ALB:
-  #   Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-  #   Properties:
-  #     Name: PaymentGatewayALB
-  #     Scheme: internet-facing
-  #     Subnets:
-  #       - !Ref PublicSubnet1
-  #       - !Ref PublicSubnet2
-  #     SecurityGroups:
-  #       - !Ref ALBSecurityGroup
-  #     Tags:
-  #       - Key: Name
-  #         Value: ALB-PaymentGateway
-        # - Key: Environment
-        #   Value: !Ref Environment
-        # - Key: Version
-        #   Value: !Ref VersionTag
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: PaymentGatewayALB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: ALB-PaymentGateway
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Version
+          Value: !Ref VersionTag
 
-  # ALBListener:
-  #   Type: AWS::ElasticLoadBalancingV2::Listener
-  #   Properties:
-  #     LoadBalancerArn: !Ref ALB
-  #     Port: 443  # HTTPS port
-  #     Protocol: HTTPS
-  #     Certificates:
-  #       - CertificateArn: !Ref SSLCertificateArn  # ACM certificate
-  #     DefaultActions:
-  #       - Type: forward
-  #         TargetGroupArn: !Ref PaymentTargetGroup
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      # Port: 443  # HTTPS port
+      # Protocol: HTTPS
+      # Certificates:
+      #   - CertificateArn: !Ref SSLCertificateArn  # ACM certificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PaymentTargetGroup
 
-  # PaymentTargetGroup:
-  #   Type: AWS::ElasticLoadBalancingV2::TargetGroup
-  #   Properties:
-  #     Name: PaymentTargetGroup
-  #     Port: 8080  # Traffic to backend pods
-  #     Protocol: HTTP
-  #     VpcId: !Ref VPC
-  #     TargetType: ip  # Targeting Fargate pods
-  #     HealthCheckProtocol: HTTP
-  #     HealthCheckPath: /health
-  #     HealthCheckIntervalSeconds: 30
-  #     HealthCheckTimeoutSeconds: 5
-  #     HealthyThresholdCount: 2
-  #     UnhealthyThresholdCount: 2
-  #     Tags:
-  #       - Key: Name
-  #         Value: PaymentTargetGroup
-        # - Key: Environment
-        #   Value: !Ref Environment
-        # - Key: Version
-        #   Value: !Ref VersionTag
+  PaymentTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: PaymentTargetGroup
+      Port: 80  # Traffic to backend pods
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip  # Targeting Fargate pods
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Tags:
+        - Key: Name
+          Value: PaymentTargetGroup
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Version
+          Value: !Ref VersionTag
 
   # # S3 for Static Content and CloudFront Configuration
   # StaticContentBucket:
