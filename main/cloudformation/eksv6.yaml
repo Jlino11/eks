@@ -101,6 +101,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${VPCName}-InternetGateway"
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -115,6 +117,8 @@ Resources:
     Properties:
       Domain: vpc
       Tags:
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -126,6 +130,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${VPCName}-NatGateway"
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -203,6 +209,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${VPCName}-PublicRouteTable"
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -232,6 +240,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${VPCName}-PrivateRouteTable"
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -275,6 +285,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${ClusterName}-eks-sg"
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -294,6 +306,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${ClusterName}-fargate-sg"
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -315,8 +329,10 @@ Resources:
   #     Tags:
   #       - Key: Name
   #         Value: !Sub "${ClusterName}-rds-sg"
-  #       - Key: Version
-  #         Value: !Ref VersionTag
+          # - Key: Environment
+            # Value: !Ref Environment
+          # - Key: Version
+            # Value: !Ref VersionTag
 
   NatGatewaySecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -334,6 +350,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${VPCName}-nat-sg"
+        - Key: Environment
+          Value: !Ref Environment
         - Key: Version
           Value: !Ref VersionTag
 
@@ -353,6 +371,10 @@ Resources:
       Tags:
         - Key: Name
           Value: ALBSecurityGroup
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Version
+          Value: !Ref VersionTag
 
   
 
@@ -373,6 +395,10 @@ Resources:
   #     Tags:
   #       - Key: Name
   #         Value: ALB-PaymentGateway
+        # - Key: Environment
+        #   Value: !Ref Environment
+        # - Key: Version
+        #   Value: !Ref VersionTag
 
   # ALBListener:
   #   Type: AWS::ElasticLoadBalancingV2::Listener
@@ -403,6 +429,10 @@ Resources:
   #     Tags:
   #       - Key: Name
   #         Value: PaymentTargetGroup
+        # - Key: Environment
+        #   Value: !Ref Environment
+        # - Key: Version
+        #   Value: !Ref VersionTag
 
   # # S3 for Static Content and CloudFront Configuration
   # StaticContentBucket:
@@ -424,8 +454,10 @@ Resources:
   #     Tags:
   #       - Key: Name
   #         Value: !Ref S3BucketName
-  #       - Key: Version
-  #         Value: !Ref VersionTag
+        # - Key: Environment
+        #   Value: !Ref Environment
+        # - Key: Version
+        #   Value: !Ref VersionTag
 
   # CloudFrontDistribution:
   #   Type: AWS::CloudFront::Distribution
@@ -453,13 +485,55 @@ Resources:
   #         Bucket: !Ref LoggingBucket
   #         IncludeCookies: false
   #     Tags:
-  #       - Key: Version
-  #         Value: !Ref VersionTag
+        # - Key: Environment
+        #   Value: !Ref Environment
+        # - Key: Version
+        #   Value: !Ref VersionTag
   ######################################################################################
   # CLUSTER CONFIG
 
+  # IAM Role para los nodos EC2
+  EKSNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+        - Key: Name
+          Value: EKSNodeGroup
+
+  # Node Group para manejar los recursos del sistema en EC2
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodeRole: !GetAtt EKSNodeRole.Arn
+      ScalingConfig:
+        MinSize: 2  # Número mínimo de nodos EC2 para los recursos del sistema
+        MaxSize: 5  # Número máximo de nodos
+        DesiredSize: 2  # Tamaño inicial
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      InstanceTypes:
+        - t3.medium
+      DiskSize: 20  # Tamaño del disco de los nodos
+      AmiType: AL2_x86_64  # Amazon Linux 2 AMI para las instancias EC2
+      Tags:
+        Name: EKSNodeGroup   # Aquí se usa un par clave-valor (no un array)
+        Environment: !Ref Environment  # Añade más etiquetas según sea necesario
+
   # IAM Role para EKS Cluster
-    # IAM Role for the EKS Cluster
+  # IAM Role for the EKS Cluster
   EKSClusterRole:
     Type: AWS::IAM::Role
     Properties:
@@ -493,6 +567,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref ClusterName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Version
+          Value: !Ref VersionTag
 
   # IAM Role for Fargate Pods
   PodExecutionRole:
@@ -558,26 +636,7 @@ Resources:
             Resource: "*"
       Roles:
         - !Ref PodExecutionRole  # Asociar la política al rol de ejecución de pods
-
-  # Fargate Profile for kube-system Namespace
-  # FargateProfileKubeSystem:
-  #   Type: AWS::EKS::FargateProfile
-  #   DependsOn: FargateProfile  # Make sure the default profile is created first
-  #   Properties:
-  #     ClusterName: !Ref EKSCluster
-  #     FargateProfileName: kube-system-profile
-  #     PodExecutionRoleArn: !GetAtt PodExecutionRole.Arn
-  #     Subnets:
-  #       - !Ref PrivateSubnet1
-  #       - !Ref PrivateSubnet2
-  #     Selectors:
-  #       - Namespace: kube-system
-  #       - Namespace: kube-public
-  #       - Namespace: kube-node-lease
-  #       # - 
-  #     Tags:
-  #       - Key: Version
-  #         Value: !Ref VersionTag
+        - !Ref EKSClusterRole
 
   # # PostgreSQL Database (RDS) with KMS Encryption
   # RDSPostgresDB:
@@ -601,8 +660,10 @@ Resources:
   #     Tags:
   #       - Key: Name
   #         Value: !Sub "${ClusterName}-postgres-db"
-  #       - Key: Version
-  #         Value: !Ref VersionTag
+        # - Key: Environment
+        #   Value: !Ref Environment
+        # - Key: Version
+        #   Value: !Ref VersionTag
 
   # # DB Subnet Group for RDS (using private subnets)
   # DBSubnetGroup:
@@ -615,27 +676,10 @@ Resources:
   #     Tags:
   #       - Key: Name
   #         Value: !Sub "${ClusterName}-db-subnet-group"
-  #       - Key: Version
-  #         Value: !Ref VersionTag
-
-  # ESTO ES IMPOSIBLE REALIZARLO CON CLOUDFORMATION
-  # NGINXService:
-  #   Type: AWS::EKS::Service
-  #   Properties:
-  #     ClusterName: !Ref EKSCluster
-  #     Name: nginx-service
-  #     Namespace: default
-  #     Spec:
-  #       Type: LoadBalancer
-  #       Ports:
-  #         - Port: 80
-  #           Protocol: TCP
-  #           TargetPort: 80
-  #       Selector:
-  #         app: nginx
-  #     Tags:
-  #       - Key: Version
-  #         Value: !Ref VersionTag
+        # - Key: Environment
+        #   Value: !Ref Environment
+        # - Key: Version
+        #   Value: !Ref VersionTag
 
 Outputs:
   VPCId:
@@ -647,6 +691,3 @@ Outputs:
   EKSClusterName:
     Description: EKS Cluster Name
     Value: !Ref EKSCluster
-
-# TODO:
-# SE NECESITA CREAR UN LOADBALANCER CON EKS EL CUAL ES UTILIZADO POR UN ALB COMO TARGET
